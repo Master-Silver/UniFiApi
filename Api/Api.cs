@@ -10,9 +10,11 @@ namespace KoenZomers.UniFi.Api
     /// <summary>
     /// Api class to communicate with the UniFi Controller
     /// </summary>
-    public class Api
+    public class Api : IApi
     {
         #region Fields
+
+        private readonly IHttpUtility _httpUtility;
 
         /// <summary>
         /// Cookie container which holds all cookies for sessions towards the UniFi Controller
@@ -57,12 +59,22 @@ namespace KoenZomers.UniFi.Api
 
         #region Constructors
 
+        public Api(IHttpUtility httpUtility, Uri baseUri, string siteId = null)
+        {
+            _httpUtility = httpUtility;
+            BaseUri = baseUri;
+            if (!string.IsNullOrWhiteSpace(siteId))
+            {
+                SiteId = siteId;
+            }
+        }
+
         /// <summary>
         /// Instantiates a new instance of the UniFi API Controller class against the default UniFi site
         /// </summary>
         /// <param name="baseUri">BaseUri of the UniFi Controller, i.e. https://192.168.0.1:8443</param>
-        public Api(Uri baseUri) : this(baseUri, null)
-        {            
+        public Api(Uri baseUri) : this(new HttpUtility(), baseUri)
+        {
         }
 
         /// <summary>
@@ -70,13 +82,8 @@ namespace KoenZomers.UniFi.Api
         /// </summary>
         /// <param name="baseUri">BaseUri of the UniFi Controller, i.e. https://192.168.0.1:8443</param>
         /// <param name="siteId">Identifier of the site in UniFi. Set to NULL if you want to use the default site.</param>
-        public Api(Uri baseUri, string siteId)
+        public Api(Uri baseUri, string siteId) : this(new HttpUtility(), baseUri, siteId)
         {
-            BaseUri = baseUri;
-            if (!string.IsNullOrWhiteSpace(siteId))
-            {
-                SiteId = siteId;
-            }
         }
 
         #endregion
@@ -88,15 +95,15 @@ namespace KoenZomers.UniFi.Api
         /// </summary>
         public void DisableSslValidation()
         {
-            HttpUtility.DisableSslValidation();
+            _httpUtility.DisableSslValidation();
         }
-        
+
         /// <summary>
         /// Enables connecting to a remote server hosting UniFi using a TLS 1.1 or TLS 1.2 certificate
         /// </summary>
         public void EnableTls11and12()
         {
-            HttpUtility.EnableTls11and12();
+            _httpUtility.EnableTls11and12();
         }
 
         /// <summary>
@@ -105,7 +112,7 @@ namespace KoenZomers.UniFi.Api
         /// <returns>Boolean indicating whether the authentication was successful (True) or failed (False)</returns>
         public async Task<bool> Reauthenticate()
         {
-            if(string.IsNullOrEmpty(_username) || string.IsNullOrEmpty(_password))
+            if (string.IsNullOrEmpty(_username) || string.IsNullOrEmpty(_password))
             {
                 throw new InvalidOperationException("No cached credentials yet. Call Authenticate first.");
             }
@@ -129,7 +136,7 @@ namespace KoenZomers.UniFi.Api
 
             // Send an authentication request
             var authUri = new Uri(BaseUri, "/api/login");
-            var resultString = await HttpUtility.AuthenticateViaJsonPostMethod(authUri, username, password, _cookieContainer, ConnectionTimeout);
+            var resultString = await _httpUtility.AuthenticateViaJsonPostMethod(authUri, username, password, _cookieContainer, ConnectionTimeout);
             var resultJson = JsonConvert.DeserializeObject<Responses.ResponseEnvelope<Responses.BaseResponse>>(resultString);
 
             // Verify if the request was successful
@@ -155,7 +162,7 @@ namespace KoenZomers.UniFi.Api
                 }
 
                 // Try to reauthenticate using cached credentials
-                if(!await Reauthenticate())
+                if (!await Reauthenticate())
                 {
                     throw new InvalidOperationException("No active connection yet and unable to reauthenticate using cached credentials. Call Authenticate first.");
                 }
@@ -164,10 +171,10 @@ namespace KoenZomers.UniFi.Api
             try
             {
                 // Try to get the data from the UniFi Controller
-                var resultString = await HttpUtility.GetRequestResult(uri, _cookieContainer, ConnectionTimeout);
+                var resultString = await _httpUtility.GetRequestResult(uri, _cookieContainer, ConnectionTimeout);
                 return resultString;
             }
-            catch(WebException e) when (e.Message.Contains("401"))
+            catch (WebException e) when (e.Message.Contains("401"))
             {
                 // Authenticated failed. Check if this session has authenticated successfully before.
                 if (IsAuthenticated)
@@ -178,7 +185,7 @@ namespace KoenZomers.UniFi.Api
                         throw new InvalidOperationException("Unable to reauthenticate using cached credentials. Call Authenticate first.");
                     }
 
-                    var resultString = await HttpUtility.GetRequestResult(uri, _cookieContainer, ConnectionTimeout);
+                    var resultString = await _httpUtility.GetRequestResult(uri, _cookieContainer, ConnectionTimeout);
                     return resultString;
                 }
 
@@ -214,7 +221,7 @@ namespace KoenZomers.UniFi.Api
             try
             {
                 // Try to get the data from the UniFi Controller
-                var resultString = await HttpUtility.PostRequest(uri, postData, _cookieContainer, ConnectionTimeout);
+                var resultString = await _httpUtility.PostRequest(uri, postData, _cookieContainer, ConnectionTimeout);
                 return resultString;
             }
             catch (WebException e) when (e.Message.Contains("401"))
@@ -228,7 +235,7 @@ namespace KoenZomers.UniFi.Api
                         throw new InvalidOperationException("Unable to reauthenticate using cached credentials. Call Authenticate first.");
                     }
 
-                    var resultString = await HttpUtility.PostRequest(uri, postData, _cookieContainer, ConnectionTimeout);
+                    var resultString = await _httpUtility.PostRequest(uri, postData, _cookieContainer, ConnectionTimeout);
                     return resultString;
                 }
 
@@ -412,7 +419,7 @@ namespace KoenZomers.UniFi.Api
         {
             // Create a session towards the UniFi Controller
             var logoutUri = new Uri(BaseUri, "/api/logout");
-            var resultString = await HttpUtility.LogoutViaJsonPostMethod(logoutUri, _cookieContainer, ConnectionTimeout);
+            var resultString = await _httpUtility.LogoutViaJsonPostMethod(logoutUri, _cookieContainer, ConnectionTimeout);
             var resultJson = JsonConvert.DeserializeObject<Responses.ResponseEnvelope<Responses.BaseResponse>>(resultString);
 
             // Verify if the request was successful
@@ -425,7 +432,8 @@ namespace KoenZomers.UniFi.Api
         /// Gets the currently defined networks
         /// </summary>
         /// <returns>List with defined networks</returns>
-        public async Task<List<Responses.Network>> GetNetworks() {
+        public async Task<List<Responses.Network>> GetNetworks()
+        {
             var unifiUri = new Uri(BaseUri, $"/api/s/{SiteId}/rest/networkconf");
             var resultString = await EnsureAuthenticatedGetRequest(unifiUri);
             var resultJson = JsonConvert.DeserializeObject<Responses.ResponseEnvelope<Responses.Network>>(resultString);
@@ -437,7 +445,8 @@ namespace KoenZomers.UniFi.Api
         /// Gets the currently defined wireless networks
         /// </summary>
         /// <returns>List with defined wireless networks</returns>
-        public async Task<List<Responses.WirelessNetwork>> GetWirelessNetworks() {
+        public async Task<List<Responses.WirelessNetwork>> GetWirelessNetworks()
+        {
             var unifiUri = new Uri(BaseUri, $"/api/s/{SiteId}/rest/wlanconf");
             var resultString = await EnsureAuthenticatedGetRequest(unifiUri);
             var resultJson = JsonConvert.DeserializeObject<Responses.ResponseEnvelope<Responses.WirelessNetwork>>(resultString);
